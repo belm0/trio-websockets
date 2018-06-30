@@ -9,10 +9,10 @@ frames as specified in `sections 4 to 8 of RFC 6455`_.
 import logging
 
 import trio
-from websockets.utils import encode_data
 from wsproto.connection import ConnectionState
 from wsproto import events
 
+from .utils import encode_data
 from .exceptions import (
     ConnectionClosed, InvalidState, PayloadTooBig, WebSocketProtocolError
 )
