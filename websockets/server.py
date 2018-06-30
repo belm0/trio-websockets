@@ -8,20 +8,10 @@ import collections.abc
 import logging
 import sys
 
-from .compatibility import (
-    BAD_REQUEST, FORBIDDEN, INTERNAL_SERVER_ERROR, SERVICE_UNAVAILABLE,
-    SWITCHING_PROTOCOLS, UPGRADE_REQUIRED, asyncio_ensure_future
-)
 from .exceptions import (
-    AbortHandshake, InvalidHandshake, InvalidMessage, InvalidOrigin,
-    InvalidUpgrade, NegotiationError
+    InvalidHandshake
 )
-from .extensions.permessage_deflate import ServerPerMessageDeflateFactory
-from .handshake import build_response, check_request
-from .headers import (
-    build_extension_list, parse_extension_list, parse_subprotocol_list
-)
-from .http import USER_AGENT, build_headers, read_request
+
 from .protocol import WebSocketCommonProtocol
 
 

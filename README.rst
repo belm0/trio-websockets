@@ -1,5 +1,40 @@
-WebSockets
-==========
+trio-websockets
+===============
+
+Trio-based websockets library. A work in progress.
+
+- The client-side works.
+- The server-side does not.
+
+This used https://github.com/aaugustin/websockets as a base, with the following changes:
+
+- Rip out all asyncio things, replace with trio.
+- Rip out the websocket protocol code, replace with wsproto.
+
+What remains of the websockets library itself?
+
+- Most of the remaining code seems to be additional error checking around connection
+  state. Rather than a "trio.BrokenStreamError", you will receive a ConnectionClosed
+  exception when trying to write on a closed connection.
+
+- The same/very similar interface to websockets, which might be slightly more
+  user-friendly than a raw wsproto connection (say, exposing attributes like .subprotocol,
+  which wsproto passes along during the ConnectionEstablished event.
+
+
+TODO
+====
+
+- Port the server-side.
+- Make the examples run.
+- Make the tests run.
+- Support for curio.
+- Cleanup documentation and readme.
+- Experiment with a different architecture, using reader/writer tasks.
+
+
+Original Readme
+===============
 
 |rtd| |pypi-v| |pypi-pyversions| |pypi-l| |pypi-wheel| |circleci| |codecov|
 
@@ -23,6 +58,7 @@ WebSockets
 
 .. |codecov| image:: https://codecov.io/gh/aaugustin/websockets/branch/master/graph/badge.svg
     :target: https://codecov.io/gh/aaugustin/websockets
+
 
 What is ``websockets``?
 -----------------------

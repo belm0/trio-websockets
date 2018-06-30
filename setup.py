@@ -23,7 +23,7 @@ py_version = sys.version_info[:2]
 if py_version < (3, 4):
     raise Exception("websockets requires Python >= 3.4.")
 
-packages = ['websockets', 'websockets/extensions']
+packages = ['websockets']
 
 if py_version >= (3, 5):
     packages.append('websockets/py35')
@@ -31,13 +31,6 @@ if py_version >= (3, 5):
 if py_version >= (3, 6):
     packages.append('websockets/py36')
 
-ext_modules = [
-    setuptools.Extension(
-        'websockets.speedups',
-        sources=['websockets/speedups.c'],
-        optional=not (root_dir / '.cibuildwheel').exists(),
-    )
-]
 
 setuptools.setup(
     name='websockets',
@@ -61,7 +54,6 @@ setuptools.setup(
         'Programming Language :: Python :: 3.6',
     ],
     packages=packages,
-    ext_modules=ext_modules,
     include_package_data=True,
     zip_safe=True,
     python_requires='>=3.4',

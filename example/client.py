@@ -2,7 +2,7 @@
 
 # WS client example
 
-import asyncio
+import trio
 import websockets
 
 async def hello():
@@ -11,9 +11,11 @@ async def hello():
         name = input("What's your name? ")
 
         await websocket.send(name)
+        await websocket.send(name)
+        await websocket.send(name)
         print(f"> {name}")
 
         greeting = await websocket.recv()
         print(f"< {greeting}")
 
-asyncio.get_event_loop().run_until_complete(hello())
+trio.run(hello)
