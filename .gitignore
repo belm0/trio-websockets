@@ -8,4 +8,4 @@ dist/
 docs/_build/
 htmlcov/
 MANIFEST
-websockets.egg-info/
+*.egg-info/

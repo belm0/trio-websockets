@@ -15,32 +15,33 @@ with (root_dir / 'README.rst').open(encoding='utf-8') as f:
 
 # When dropping Python < 3.5, change to:
 # exec((root_dir / 'websockets' / 'version.py').read_text(encoding='utf-8'))
-with (root_dir / 'websockets' / 'version.py').open(encoding='utf-8') as f:
+with (root_dir / 'trio_websockets' / 'version.py').open(encoding='utf-8') as f:
     exec(f.read())
 
 py_version = sys.version_info[:2]
 
-if py_version < (3, 4):
-    raise Exception("websockets requires Python >= 3.4.")
+if py_version < (3, 5):
+    raise Exception("websockets requires Python >= 3.5.")
 
-packages = ['websockets']
+packages = ['trio_websockets']
 
 if py_version >= (3, 5):
-    packages.append('websockets/py35')
+    packages.append('trio_websockets/py35')
 
 if py_version >= (3, 6):
-    packages.append('websockets/py36')
+    packages.append('trio_websockets/py36')
 
 
 setuptools.setup(
-    name='websockets',
+    name='trio-websockets',
     version=version,
     description=description,
     long_description=long_description,
-    url='https://github.com/aaugustin/websockets',
-    author='Aymeric Augustin',
-    author_email='aymeric.augustin@m4x.org',
+    url='https://github.com/miracle2k/trio-websockets',
+    author='Michael Elsdorfer',
+    author_email='michael@elsdorfer.com',
     license='BSD',
+    install_requires=['wsproto'],
     classifiers=[
         'Development Status :: 5 - Production/Stable',
         'Environment :: Web Environment',
@@ -49,7 +50,6 @@ setuptools.setup(
         'Operating System :: OS Independent',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
     ],
