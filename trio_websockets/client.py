@@ -7,6 +7,7 @@ import trio
 from wsproto.connection import ConnectionType, WSConnection
 from wsproto.events import ConnectionEstablished
 from wsproto.extensions import PerMessageDeflate
+from .exceptions import WebSocketProtocolError
 from .protocol import WebSocketCommonProtocol
 from .uri import parse_uri
 
@@ -92,7 +93,7 @@ class WebSocketClientProtocol(WebSocketCommonProtocol):
 
         event = await self.read_until_next_event()
         if not isinstance(event, ConnectionEstablished):
-            raise RuntimeError()
+            raise WebSocketProtocolError('Unexpected event: {}'.format(event))
 
         # wsproto should tell us these
         self.extensions = event.extensions
@@ -178,10 +179,15 @@ class Connect:
     
     async def __aenter__(self):
         wsuri = self._wsuri
-        if wsuri.secure:
-            stream = await trio.open_ssl_over_tcp_stream(wsuri.host, wsuri.port, https_compatible=True)
-        else:
-            stream = await trio.open_tcp_stream(wsuri.host, wsuri.port)
+
+        try:
+            if wsuri.secure:
+                stream = await trio.open_ssl_over_tcp_stream(wsuri.host, wsuri.port, https_compatible=True)
+            else:
+                stream = await trio.open_tcp_stream(wsuri.host, wsuri.port)
+        except OSError as exc:
+            # Because augustin/websockets raises a ConnectionError.
+            raise ConnectionError() from exc
         
         protocol = self.factory(stream)
 
