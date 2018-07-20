@@ -2,11 +2,12 @@
 
 # WS echo server with HTTP endpoint at /health/
 
-import asyncio
 import http
-import websockets
+import trio
+import trio_websockets
 
-class ServerProtocol(websockets.WebSocketServerProtocol):
+
+class ServerProtocol(trio_websockets.WebSocketServerProtocol):
 
     async def process_request(self, path, request_headers):
         if path == '/health/':
@@ -14,10 +15,12 @@ class ServerProtocol(websockets.WebSocketServerProtocol):
 
 async def echo(websocket, path):
     async for message in websocket:
-        await websocket.send(message)
+        await trio_websockets.send(message)
 
-start_server = websockets.serve(
-    echo, 'localhost', 8765, create_protocol=ServerProtocol)
 
-asyncio.get_event_loop().run_until_complete(start_server)
-asyncio.get_event_loop().run_forever()
+async def main():
+    await trio_websockets.serve(
+        echo, 'localhost', 8765, create_protocol=ServerProtocol)
+
+
+trio.run(main)

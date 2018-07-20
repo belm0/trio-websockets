@@ -2,17 +2,17 @@
 
 # WSS (WS over TLS) client example, with a self-signed certificate
 
-import asyncio
+import trio
 import pathlib
 import ssl
-import websockets
+import trio_websockets
 
 ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 ssl_context.load_verify_locations(
     pathlib.Path(__file__).with_name('localhost.pem'))
 
 async def hello():
-    async with websockets.connect(
+    async with trio_websockets.connect(
             'wss://localhost:8765', ssl=ssl_context) as websocket:
         name = input("What's your name? ")
 
@@ -22,4 +22,4 @@ async def hello():
         greeting = await websocket.recv()
         print(f"< {greeting}")
 
-asyncio.get_event_loop().run_until_complete(hello())
+trio.run(hello)

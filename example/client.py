@@ -3,10 +3,10 @@
 # WS client example
 
 import trio
-import websockets
+import trio_websockets
 
 async def hello():
-    async with websockets.connect(
+    async with trio_websockets.connect(
             'ws://localhost:8765') as websocket:
         name = input("What's your name? ")
 
