@@ -255,8 +255,9 @@ class WebSocketCommonProtocol:
                 self.closed_exc = exc
                 await self.fail_connection(1009)
 
-            raise ConnectionClosed(
-                self.close_code, self.close_reason) from self.closed_exc
+            if self.closed_exc:
+                raise ConnectionClosed(
+                    self.close_code, self.close_reason) from self.closed_exc
 
     async def send(self, data):
         """
