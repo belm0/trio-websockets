@@ -394,15 +394,28 @@ class WebSocketCommonProtocol:
         raise InvalidState("WebSocket connection isn't established yet")
 
     def next_event(self):
+        """
+        Return the next event from wsproto, or None if there is no event.
+        """
+
+        # If we do not have an events iterator, create one.
         if not self._events:
             self._events = self.wsproto.events()
+
         try:
+            # Get the next event from the iterator.
             return next(self._events)
         except StopIteration:
+            # If the current iterator is at the end, create a new one.
+            # While we are processing the old one, new events may have
+            # arrived.
             self._events = self.wsproto.events()
+
             try:
+                # Return the first event from the new iterator.
                 return next(self._events)
             except StopIteration:
+                # There is currently no event.
                 return None
 
     async def read_until_next_event(self):
