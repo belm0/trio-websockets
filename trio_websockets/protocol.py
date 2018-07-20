@@ -203,7 +203,10 @@ class WebSocketCommonProtocol:
         # Don't await self.ensure_open() here because messages could be
         # received before the closing frame even if the connection is closing.
 
+        incomplete_data = None
+
         while True:
+
             try:
                 msg = await self.read_until_next_event()
 
@@ -213,7 +216,13 @@ class WebSocketCommonProtocol:
                     raise ConnectionClosed(msg.code, msg.reason)
 
                 elif isinstance(msg, events.DataReceived):
-                    return msg.data
+                    if incomplete_data:
+                        incomplete_data += msg.data
+                    else:
+                        incomplete_data = msg.data
+
+                    if msg.message_finished:
+                        return incomplete_data
 
                 elif isinstance(msg, (events.PingReceived, events.PongReceived)):
                     continue
