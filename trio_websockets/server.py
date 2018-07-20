@@ -3,19 +3,20 @@ The :mod:`websockets.server` module defines a simple WebSocket server API.
 
 """
 
-import asyncio
 import collections.abc
 import logging
 import sys
-
+import functools
+import trio
+from wsproto.extensions import PerMessageDeflate
 from .exceptions import (
-    InvalidHandshake
+    InvalidHandshake, AbortHandshake
 )
-
 from .protocol import WebSocketCommonProtocol
 
 
 __all__ = ['serve', 'unix_serve', 'WebSocketServerProtocol']
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,149 +35,26 @@ class WebSocketServerProtocol(WebSocketCommonProtocol):
     is_client = False
     side = 'server'
 
-    def __init__(self, ws_handler, ws_server, *,
+    def __init__(self, ws_handler, *,
                  origins=None, extensions=None, subprotocols=None,
                  extra_headers=None, **kwds):
+
+        self.wsproto = WSConnection(
+            ConnectionType.CLIENT,
+            host=host,
+            extensions=extensions,
+            subprotocols=subprotocols
+        )
+
         self.ws_handler = ws_handler
-        self.ws_server = ws_server
         self.origins = origins
+        # TODO: make those properties reading from wsconnection
         self.available_extensions = extensions
         self.available_subprotocols = subprotocols
         self.extra_headers = extra_headers
-        super().__init__(**kwds)
+        super().__init__(**kwds)    
 
-    def connection_made(self, transport):
-        """
-        Register connection and initialize a task to handle it.
-
-        """
-        super().connection_made(transport)
-        # Register the connection with the server before creating the handler
-        # task. Registering at the beginning of the handler coroutine would
-        # create a race condition between the creation of the task, which
-        # schedules its execution, and the moment the handler starts running.
-        self.ws_server.register(self)
-        self.handler_task = asyncio_ensure_future(
-            self.handler(), loop=self.loop)
-
-    @asyncio.coroutine
-    def handler(self):
-        """
-        Handle the lifecycle of a WebSocket connection.
-
-        Since this method doesn't have a caller able to handle exceptions, it
-        attemps to log relevant ones and close the connection properly.
-
-        """
-        try:
-
-            try:
-                path = yield from self.handshake(
-                    origins=self.origins,
-                    available_extensions=self.available_extensions,
-                    available_subprotocols=self.available_subprotocols,
-                    extra_headers=self.extra_headers,
-                )
-            except ConnectionError as exc:
-                logger.debug(
-                    "Connection error in opening handshake", exc_info=True)
-                raise
-            except Exception as exc:
-                if self._is_server_shutting_down(exc):
-                    early_response = (
-                        SERVICE_UNAVAILABLE,
-                        [],
-                        b"Server is shutting down.\n",
-                    )
-                elif isinstance(exc, AbortHandshake):
-                    early_response = (
-                        exc.status,
-                        exc.headers,
-                        exc.body,
-                    )
-                elif isinstance(exc, InvalidOrigin):
-                    logger.debug("Invalid origin", exc_info=True)
-                    early_response = (
-                        FORBIDDEN,
-                        [],
-                        (str(exc) + "\n").encode(),
-                    )
-                elif isinstance(exc, InvalidUpgrade):
-                    logger.debug("Invalid upgrade", exc_info=True)
-                    early_response = (
-                        UPGRADE_REQUIRED,
-                        [('Upgrade', 'websocket')],
-                        (str(exc) + "\n").encode(),
-                    )
-                elif isinstance(exc, InvalidHandshake):
-                    logger.debug("Invalid handshake", exc_info=True)
-                    early_response = (
-                        BAD_REQUEST,
-                        [],
-                        (str(exc) + "\n").encode(),
-                    )
-                else:
-                    logger.warning("Error in opening handshake", exc_info=True)
-                    early_response = (
-                        INTERNAL_SERVER_ERROR,
-                        [],
-                        b"See server log for more information.\n",
-                    )
-
-                yield from self.write_http_response(*early_response)
-                yield from self.fail_connection()
-
-                return
-
-            try:
-                yield from self.ws_handler(self, path)
-            except Exception as exc:
-                if self._is_server_shutting_down(exc):
-                    if not self.closed:
-                        self.fail_connection(1001)
-                else:
-                    logger.error("Error in connection handler", exc_info=True)
-                    if not self.closed:
-                        self.fail_connection(1011)
-                raise
-
-            try:
-                yield from self.close()
-            except ConnectionError as exc:
-                logger.debug(
-                    "Connection error in closing handshake", exc_info=True)
-                raise
-            except Exception as exc:
-                if not self._is_server_shutting_down(exc):
-                    logger.warning("Error in closing handshake", exc_info=True)
-                raise
-
-        except Exception:
-            # Last-ditch attempt to avoid leaking connections on errors.
-            try:
-                self.writer.close()
-            except Exception:                               # pragma: no cover
-                pass
-
-        finally:
-            # Unregister the connection with the server when the handler task
-            # terminates. Registration is tied to the lifecycle of the handler
-            # task because the server waits for tasks attached to registered
-            # connections before terminating.
-            self.ws_server.unregister(self)
-
-    def _is_server_shutting_down(self, exc):
-        """
-        Decide whether an exception means that the server is shutting down.
-
-        """
-        return (
-            isinstance(exc, asyncio.CancelledError) and
-            self.ws_server.closing
-        )
-
-    @asyncio.coroutine
-    def read_http_request(self):
+    async def read_http_request(self):
         """
         Read request line and headers from the HTTP request.
 
@@ -189,7 +67,7 @@ class WebSocketServerProtocol(WebSocketCommonProtocol):
 
         """
         try:
-            path, headers = yield from read_request(self.reader)
+            path, headers = await read_request(self.reader)
         except ValueError as exc:
             raise InvalidMessage("Malformed HTTP message") from exc
 
@@ -199,8 +77,7 @@ class WebSocketServerProtocol(WebSocketCommonProtocol):
 
         return path, self.request_headers
 
-    @asyncio.coroutine
-    def write_http_response(self, status, headers, body=None):
+    async def write_http_response(self, status, headers, body=None):
         """
         Write status line and headers to the HTTP response.
 
@@ -224,8 +101,7 @@ class WebSocketServerProtocol(WebSocketCommonProtocol):
         if body is not None:
             self.writer.write(body)
 
-    @asyncio.coroutine
-    def process_request(self, path, request_headers):
+    async def process_request(self, path, request_headers):
         """
         Intercept the HTTP request and return an HTTP response if needed.
 
@@ -397,8 +273,7 @@ class WebSocketServerProtocol(WebSocketCommonProtocol):
             client_subprotocols.index(p) + server_subprotocols.index(p))
         return sorted(subprotocols, key=priority)[0]
 
-    @asyncio.coroutine
-    def handshake(self, origins=None, available_extensions=None,
+    async def handshake(self, origins=None, available_extensions=None,
                   available_subprotocols=None, extra_headers=None):
         """
         Perform the server side of the opening handshake.
@@ -422,12 +297,12 @@ class WebSocketServerProtocol(WebSocketCommonProtocol):
         Return the path of the URI of the request.
 
         """
-        path, request_headers = yield from self.read_http_request()
+        path, request_headers = await self.read_http_request()
 
         # Hook for customizing request handling, for example checking
         # authentication or treating some paths as plain HTTP endpoints.
 
-        early_response = yield from self.process_request(path, request_headers)
+        early_response = await self.process_request(path, request_headers)
         if early_response is not None:
             raise AbortHandshake(*early_response)
 
@@ -466,7 +341,7 @@ class WebSocketServerProtocol(WebSocketCommonProtocol):
 
         build_response(set_header, key)
 
-        yield from self.write_http_response(
+        await self.write_http_response(
             SWITCHING_PROTOCOLS, response_headers)
 
         self.connection_open()
@@ -474,122 +349,103 @@ class WebSocketServerProtocol(WebSocketCommonProtocol):
         return path
 
 
-class WebSocketServer:
+async def websocket_server_handler(stream, protocol_factory):
     """
-    Wrapper for :class:`~asyncio.Server` that closes connections on exit.
+    Handle the lifecycle of a WebSocket connection.
 
-    This class provides the return type of :func:`~websockets.server.serve`.
-
-    It mimics the interface of :class:`~asyncio.AbstractServer`, namely its
-    :meth:`~asyncio.AbstractServer.close()` and
-    :meth:`~asyncio.AbstractServer.wait_closed()` methods, to close WebSocket
-    connections properly on exit, in addition to closing the underlying
-    :class:`~asyncio.Server`.
-
-    Instances of this class store a reference to the :class:`~asyncio.Server`
-    object returned by :meth:`~asyncio.AbstractEventLoop.create_server` rather
-    than inherit from :class:`~asyncio.Server` in part because
-    :meth:`~asyncio.AbstractEventLoop.create_server` doesn't support passing a
-    custom :class:`~asyncio.Server` class.
-
+    Since this method doesn't have a caller able to handle exceptions, it
+    attemps to log relevant ones and close the connection properly.
     """
-    def __init__(self, loop):
-        # Store a reference to loop to avoid relying on self.server._loop.
-        self.loop = loop
 
-        self.closing = False
-        self.websockets = set()
+    protocol = protocol_factory()
 
-    def wrap(self, server):
-        """
-        Attach to a given :class:`~asyncio.Server`.
+    try:
+        try:
+            path = await protocol.handshake(
+                origins=protocol.origins,
+                available_extensions=protocol.available_extensions,
+                available_subprotocols=protocol.available_subprotocols,
+                extra_headers=protocol.extra_headers,
+            )
+        except ConnectionError as exc:
+            logger.debug(
+                "Connection error in opening handshake", exc_info=True)
+            raise
+        except Exception as exc:            
+            if isinstance(exc, AbortHandshake):
+                early_response = (
+                    exc.status,
+                    exc.headers,
+                    exc.body,
+                )
+            # elif isinstance(exc, InvalidOrigin):
+            #     logger.debug("Invalid origin", exc_info=True)
+            #     early_response = (
+            #         FORBIDDEN,
+            #         [],
+            #         (str(exc) + "\n").encode(),
+            #     )
+            # elif isinstance(exc, InvalidUpgrade):
+            #     logger.debug("Invalid upgrade", exc_info=True)
+            #     early_response = (
+            #         UPGRADE_REQUIRED,
+            #         [('Upgrade', 'websocket')],
+            #         (str(exc) + "\n").encode(),
+            #     )
+            # elif isinstance(exc, InvalidHandshake):
+            #     logger.debug("Invalid handshake", exc_info=True)
+            #     early_response = (
+            #         BAD_REQUEST,
+            #         [],
+            #         (str(exc) + "\n").encode(),
+            #     )
+            else:
+                logger.warning("Error in opening handshake", exc_info=True)
+                early_response = (
+                    500,
+                    [],
+                    b"See server log for more information.\n",
+                )
 
-        Since :meth:`~asyncio.AbstractEventLoop.create_server` doesn't support
-        injecting a custom ``Server`` class, the easiest solution that doesn't
-        rely on private :mod:`asyncio` APIs is to:
+            await protocol.write_http_response(*early_response)
+            await protocol.fail_connection()
 
-        - instantiate a :class:`WebSocketServer`
-        - give the protocol factory a reference to that instance
-        - call :meth:`~asyncio.AbstractEventLoop.create_server` with the
-          factory
-        - attach the resulting :class:`~asyncio.Server` with this method
+            raise
 
-        """
-        self.server = server
+        try:
+            await protocol.ws_handler(self, path)
+        except Exception as exc:
+            if protocol._is_server_shutting_down(exc):
+                if not protocol.closed:
+                    protocol.fail_connection(1001)
+            else:
+                logger.error("Error in connection handler", exc_info=True)
+                if not protocol.closed:
+                    protocol.fail_connection(1011)
+            raise
 
-    def register(self, protocol):
-        """
-        Register a connection with this server.
+        try:
+            await protocol.close()
+        except ConnectionError as exc:
+            logger.debug(
+                "Connection error in closing handshake", exc_info=True)
+            raise
+        except Exception as exc:
+            if not protocol._is_server_shutting_down(exc):
+                logger.warning("Error in closing handshake", exc_info=True)
+            raise
 
-        """
-        self.websockets.add(protocol)
+    except Exception:
+        raise
 
-    def unregister(self, protocol):
-        """
-        Unregister a connection with this server.
 
-        """
-        self.websockets.remove(protocol)
-
-    def close(self):
-        """
-        Close the underlying server, and clean up connections.
-
-        This calls :meth:`~asyncio.Server.close` on the underlying
-        :class:`~asyncio.Server` object, closes open connections with
-        status code 1001, and stops accepting new connections.
-
-        """
-        # Make a note that the server is shutting down. Websocket connections
-        # check this attribute to decide to send a "going away" close code.
-        self.closing = True
-
-        # Stop accepting new connections.
-        self.server.close()
-
-        # Close open connections. For each connection, two tasks are running:
-        # 1. self.transfer_data_task receives incoming WebSocket messages
-        # 2. self.handler_task runs the opening handshake, the handler provided
-        #    by the user and the closing handshake
-        # In the general case, cancelling the handler task will cause the
-        # handler provided by the user to exit with a CancelledError, which
-        # will then cause the transfer data task to terminate.
-        for websocket in self.websockets:
-            websocket.handler_task.cancel()
-
-    @asyncio.coroutine
-    def wait_closed(self):
-        """
-        Wait until the underlying server and all connections are closed.
-
-        This calls :meth:`~asyncio.Server.wait_closed` on the underlying
-        :class:`~asyncio.Server` object and waits until closing handshakes
-        are complete and all connections are closed.
-
-        This method must be called after :meth:`close()`.
-
-        """
-        # asyncio.wait doesn't accept an empty first argument.
-        if self.websockets:
-            # Either the handler or the connection can terminate first,
-            # depending on how the client behaves and the server is
-            # implemented.
-            yield from asyncio.wait(
-                [websocket.handler_task for websocket in self.websockets] +
-                [websocket.close_connection_task
-                    for websocket in self.websockets],
-                loop=self.loop)
-        yield from self.server.wait_closed()
-
-    @property
-    def sockets(self):
-        """
-        List of :class:`~socket.socket` objects the server is listening to.
-
-        ``None`` if the server is closed.
-
-        """
-        return self.server.sockets
+    finally:
+        # Unregister the connection with the server when the handler task
+        # terminates. Registration is tied to the lifecycle of the handler
+        # task because the server waits for tasks attached to registered
+        # connections before terminating.
+        #protocol.ws_server.unregister(self)
+        pass
 
 
 class Serve:
@@ -669,71 +525,63 @@ class Serve:
 
     def __init__(self, ws_handler, host=None, port=None, *,
                  path=None, create_protocol=None,
-                 timeout=10, max_size=2 ** 20, max_queue=2 ** 5,
-                 read_limit=2 ** 16, write_limit=2 ** 16,
-                 loop=None, legacy_recv=False, klass=None,
+                 timeout=10, max_size=2 ** 20,
                  origins=None, extensions=None, subprotocols=None,
-                 extra_headers=None, compression='deflate', **kwds):
-        # Backwards-compatibility: create_protocol used to be called klass.
-        # In the unlikely event that both are specified, klass is ignored.
-        if create_protocol is None:
-            create_protocol = klass
-
+                 extra_headers=None, compression='deflate', ssl=None):
+        
         if create_protocol is None:
             create_protocol = WebSocketServerProtocol
-
-        if loop is None:
-            loop = asyncio.get_event_loop()
-
-        ws_server = WebSocketServer(loop)
-
-        secure = kwds.get('ssl') is not None
-
+        
         if compression == 'deflate':
             if extensions is None:
                 extensions = []
             if not any(
-                extension_factory.name == ServerPerMessageDeflateFactory.name
+                extension_factory.name == PerMessageDeflate.name
                 for extension_factory in extensions
             ):
-                extensions.append(ServerPerMessageDeflateFactory())
+                extensions.append(PerMessageDeflate(
+                    client_max_window_bits=True,
+                ))
         elif compression is not None:
             raise ValueError("Unsupported compression: {}".format(compression))
 
-        factory = lambda: create_protocol(
-            ws_handler, ws_server,
-            host=host, port=port, secure=secure,
-            timeout=timeout, max_size=max_size, max_queue=max_queue,
-            read_limit=read_limit, write_limit=write_limit,
-            loop=loop, legacy_recv=legacy_recv,
+        self.factory = lambda: create_protocol(
+            ws_handler,
+            host=host, port=port, secure=ssl,
+            timeout=timeout, max_size=max_size, 
             origins=origins, extensions=extensions, subprotocols=subprotocols,
             extra_headers=extra_headers,
         )
 
-        if path is None:
-            creating_server = loop.create_server(factory, host, port, **kwds)
+        self._port = port
+        self._host = host
+        self.path = path
+        self.ssl = ssl
+
+    async def __aenter__(self):
+        return (await self)
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        # self.ws_server.close()
+        # await self.ws_server.wait_closed()
+        pass
+
+    async def connect(self):
+        if self.path:
+            # TODO: bring back support for sockets
+            pass
         else:
-            creating_server = loop.create_unix_server(factory, path, **kwds)
+            if self.ssl:
+                listeners = await trio.open_ssl_over_tcp_listeners(self._port, self.ssl, host=self._host)
+            else:    
+                listeners = await trio.open_tcp_listeners(self._port, host=self._host)
 
-        # This is a coroutine object.
-        self._creating_server = creating_server
-        self.ws_server = ws_server
-
-    @asyncio.coroutine
-    def __aenter__(self):
-        return (yield from self)
-
-    @asyncio.coroutine
-    def __aexit__(self, exc_type, exc_value, traceback):
-        self.ws_server.close()
-        yield from self.ws_server.wait_closed()
+        await trio.serve_listeners(
+            functools.partial(websocket_server_handler, protocol_factory=self.factory),
+            listeners)
 
     def __await__(self):
-        server = yield from self._creating_server
-        self.ws_server.wrap(server)
-        return self.ws_server
-
-    __iter__ = __await__
+        yield from self.connect().__await__()
 
 
 def unix_serve(ws_handler, path, **kwargs):
@@ -751,14 +599,4 @@ def unix_serve(ws_handler, path, **kwargs):
     return serve(ws_handler, path=path, **kwargs)
 
 
-# Disable asynchronous context manager functionality only on Python < 3.5.1
-# because it doesn't exist on Python < 3.5 and asyncio.ensure_future didn't
-# accept arbitrary awaitables in Python 3.5; that was fixed in Python 3.5.1.
-if sys.version_info[:3] <= (3, 5, 0):                       # pragma: no cover
-    @asyncio.coroutine
-    def serve(*args, **kwds):
-        return Serve(*args, **kwds).__await__()
-    serve.__doc__ = Serve.__doc__
-
-else:
-    serve = Serve
+serve = Serve

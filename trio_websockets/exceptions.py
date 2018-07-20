@@ -14,6 +14,20 @@ class InvalidHandshake(Exception):
 
     """
 
+
+class AbortHandshake(InvalidHandshake):
+    """
+    Exception raised to abort a handshake and return a HTTP response.
+    """
+    def __init__(self, status, headers, body=b''):
+        self.status = status
+        self.headers = headers
+        self.body = body
+        message = "HTTP {}, {} headers, {} bytes".format(
+            status, len(headers), len(body))
+        super().__init__(message)
+
+
 class InvalidState(Exception):
     """
     Exception raised when an operation is forbidden in the current state.
