@@ -427,17 +427,21 @@ class WebSocketCommonProtocol:
         Return ``None`` when the closing handshake is started.
         """
         while True:
+            # Check if an event is available, and if so, return it.
+            event = self.next_event()
+            if event:
+                return event
+
+            # If we are out of events, we need to read some data.
             data = await self.stream.receive_some(4096)
             if data == b'':
                 data = None   # wsproto only recognizes this as EOF
             self.wsproto.receive_bytes(data)
-            to_send = self.wsproto.bytes_to_send()
-            if to_send:
-                await self.stream.send_all(to_send)
 
-            event = self.next_event()
-            if event:
-                return event
+            # Is this still necessary?
+            # to_send = self.wsproto.bytes_to_send()
+            # if to_send:
+            #     await self.stream.send_all(to_send)
 
     async def close_connection(self):
         """
