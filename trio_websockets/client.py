@@ -140,7 +140,8 @@ class Connect:
                  create_protocol=None,
                  timeout=10, max_size=2 ** 20,
                  origin=None, extensions=None, subprotocols=None,
-                 extra_headers=None, compression='deflate'):
+                 extra_headers=None, compression='deflate',
+                 ssl_context=None):
         
         if create_protocol is None:
             create_protocol = WebSocketClientProtocol
@@ -175,14 +176,17 @@ class Connect:
         #     host, port = None, None
 
         self._wsuri = wsuri
-        self._origin = origin        
+        self._origin = origin
+        self._ssl_context = ssl_context
     
     async def __aenter__(self):
         wsuri = self._wsuri
 
         try:
             if wsuri.secure:
-                stream = await trio.open_ssl_over_tcp_stream(wsuri.host, wsuri.port, https_compatible=True)
+                stream = await trio.open_ssl_over_tcp_stream(
+                    wsuri.host, wsuri.port, https_compatible=True,
+                    ssl_context=self._ssl_context)
             else:
                 stream = await trio.open_tcp_stream(wsuri.host, wsuri.port)
         except OSError as exc:
