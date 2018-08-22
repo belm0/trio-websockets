@@ -179,7 +179,7 @@ class WebSocketCommonProtocol:
                 await self.stream.send_all(to_send)
                 return
 
-            except (trio.BrokenStreamError, trio.ClosedStreamError) as exc:
+            except (trio.BrokenStreamError, trio.ClosedResourceError) as exc:
                 self.closed_exc = exc
                 await self.fail_connection(1006)
 
@@ -243,7 +243,7 @@ class WebSocketCommonProtocol:
                 self.closed_exc = exc
                 await self.fail_connection(1002)
 
-            except (trio.BrokenStreamError, trio.ClosedStreamError) as exc:
+            except (trio.BrokenStreamError, trio.ClosedResourceError) as exc:
                 self.closed_exc = exc
                 await self.fail_connection(1006)
 
@@ -296,7 +296,7 @@ class WebSocketCommonProtocol:
                 try:
                     self.wsproto.close()
                     await self.flush_data()
-                except trio.ClosedStreamError:
+                except trio.ClosedResourceError:
                     pass
 
             if cancel_scope.cancelled_caught:
