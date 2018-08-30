@@ -155,9 +155,7 @@ class Connect:
                 extension_factory.name == PerMessageDeflate.name
                 for extension_factory in extensions
             ):
-                extensions.append(PerMessageDeflate(
-                    client_max_window_bits=True,
-                ))
+                extensions.append(PerMessageDeflate())
         elif compression is not None:
             raise ValueError("Unsupported compression: {}".format(compression))
 
