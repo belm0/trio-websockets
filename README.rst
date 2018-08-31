@@ -109,9 +109,10 @@ Does that look good? `Start here`_.
 What else?
 ----------
 
-Bug reports, patches and suggestions welcome! Just open an issue_ or send a
+Bug reports, patches and suggestions welcome! Just open an issue_ (???) or send a
 `pull request`_.
 
+.. role:: strike
 .. _issue: https://github.com/miracle2k/trio-websockets/issues/new
 .. _pull request: https://github.com/miracle2k/trio-websockets/compare/
 
